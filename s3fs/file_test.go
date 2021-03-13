@@ -2,30 +2,19 @@ package s3fs
 
 import (
 	"bytes"
+	"fmt"
 	"io/ioutil"
+	"path/filepath"
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 )
 
-type fakes3lister struct {
-	bucket string
-	output []*s3.Object
-}
-
-func (f *fakes3lister) ListObjectsV2(v2input *s3.ListObjectsV2Input) (*s3.ListObjectsV2Output, error) {
-	if aws.StringValue(v2input.Bucket) == f.bucket {
-		return &s3.ListObjectsV2Output{Contents: f.output}, nil
-	}
-	return nil, nil
-}
-
 func TestRead(t *testing.T) {
 	s3file := &S3File{
-		s3Api:  &fakes3lister{},
+		s3Api:  &fakeS3Api{},
 		bucket: "test-bucket",
 		key:    "/test/path",
 		s3ObjectOutput: &s3.GetObjectOutput{
@@ -48,86 +37,106 @@ func TestRead(t *testing.T) {
 }
 
 func TestReaddir(t *testing.T) {
-	bucket := "test-bucket"
-	key := "/test/path"
-	s3api := &fakes3lister{
-		bucket: bucket,
-		output: []*s3.Object{
-			&s3.Object{
-				Key:          aws.String(key),
-				Size:         aws.Int64(8),
-				LastModified: aws.Time(time.Time{}),
+	tests := []struct {
+		bucket string
+		keys   []string
+		want   []*S3FileInfo
+		count  int
+	}{
+		{
+			bucket: "test-bucket",
+			keys:   []string{"/test/path"},
+			want:   []*S3FileInfo{{key: "/test/path"}},
+			count:  1,
+		},
+		{
+			bucket: "test-bucket",
+			keys:   []string{"/test/path/sub", "/test/alt", "/test/subtest/path"},
+			want: []*S3FileInfo{
+				{key: "/test/path"},
+				{key: "/test/path/sub"},
+				{key: "/test/alt"},
+				{key: "/test/subtest/path"},
 			},
-			&s3.Object{
-				Key:          aws.String(key),
-				Size:         aws.Int64(10),
-				LastModified: aws.Time(time.Time{}),
+			count: 4,
+		},
+		{
+			bucket: "test-bucket",
+			keys:   []string{"/test/alt"},
+			want: []*S3FileInfo{
+				{key: "/test/path"},
+				{key: "/test/path/sub"},
+				{key: "/test/alt"},
+				{key: "/test/subtest/path"},
 			},
+			count: 4,
 		},
 	}
-	s3file := &S3File{
-		s3Api:  s3api,
-		bucket: bucket,
-		key:    key,
-		s3ObjectOutput: &s3.GetObjectOutput{
-			Body:          ioutil.NopCloser(bytes.NewReader([]byte("test bin"))),
-			ContentLength: aws.Int64(8),
-		},
-	}
+	s3api := newFakeS3Api()
+	for i, tt := range tests {
+		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
+			for _, key := range tt.keys {
+				s3api.PutObject(&s3.PutObjectInput{Bucket: aws.String(tt.bucket), Key: aws.String(key)})
+			}
 
-	want := []*S3FileInfo{
-		&S3FileInfo{
-			key:            key,
-			s3ObjectOutput: &s3.GetObjectOutput{},
-		},
-		&S3FileInfo{
-			key:            key,
-			s3ObjectOutput: &s3.GetObjectOutput{},
-		},
+			s3file := &S3File{
+				s3Api:  s3api,
+				bucket: tt.bucket,
+				key:    filepath.Dir(tt.keys[0]),
+				s3ObjectOutput: &s3.GetObjectOutput{
+					Body:          ioutil.NopCloser(bytes.NewReader([]byte("test bin"))),
+					ContentLength: aws.Int64(8),
+				},
+			}
+
+			infos, err := s3file.Readdir(tt.count)
+			if err != nil {
+				t.Errorf("Readdir failed: %s", err)
+			}
+			if len(infos) != len(tt.want) {
+				t.Errorf("Readdir failed. Expected %#v got %#v", tt.want, infos)
+			}
+
+		})
 	}
-	infos, err := s3file.Readdir(2)
-	if err != nil {
-		t.Errorf("Readdir failed: %s", err)
+}
+
+func sliceEquality(s1, s2 []string) bool {
+	items := make(map[string]bool)
+	for _, item := range s1 {
+		items[item] = true
 	}
-	if len(infos) != len(want) {
-		t.Errorf("Readdir failed. Expected %v got %v", want, infos)
+	for _, item := range s2 {
+		if !items[item] {
+			return false
+		}
 	}
+	return true
 }
 
 func TestReaddirnames(t *testing.T) {
 	bucket := "test-bucket"
-	key := "/test/path"
-	s3api := &fakes3lister{
-		bucket: bucket,
-		output: []*s3.Object{
-			&s3.Object{
-				Key:          aws.String(key),
-				Size:         aws.Int64(8),
-				LastModified: aws.Time(time.Time{}),
-			},
-			&s3.Object{
-				Key:          aws.String(key),
-				Size:         aws.Int64(10),
-				LastModified: aws.Time(time.Time{}),
-			},
-		},
-	}
+	key1 := "/test/path"
+	key2 := "/test/path/sub"
+	s3api := newFakeS3Api()
+	s3api.PutObject(&s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(key1)})
+	s3api.PutObject(&s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(key2)})
 	s3file := &S3File{
 		s3Api:  s3api,
 		bucket: bucket,
-		key:    key,
+		key:    key1,
 		s3ObjectOutput: &s3.GetObjectOutput{
 			Body:          ioutil.NopCloser(bytes.NewReader([]byte("test bin"))),
 			ContentLength: aws.Int64(8),
 		},
 	}
 
-	want := []string{"path", "path"}
+	want := []string{"path", "sub"}
 	infos, err := s3file.Readdirnames(2)
 	if err != nil {
 		t.Errorf("Readdir failed: %s", err)
 	}
-	if len(infos) != len(want) || !reflect.DeepEqual(want, infos) {
+	if len(infos) != len(want) || !sliceEquality(want, infos) {
 		t.Errorf("Readdir failed. Expected %v got %v", want, infos)
 	}
 }

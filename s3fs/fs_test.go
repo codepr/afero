@@ -2,7 +2,6 @@ package s3fs
 
 import (
 	"errors"
-	"fmt"
 	"io"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -92,7 +91,6 @@ func (f *fakeS3Api) ListObjectsV2(v2input *s3.ListObjectsV2Input) (*s3.ListObjec
 	if !ok {
 		return nil, errBucketNotFound
 	}
-	fmt.Printf("%#v", bucket)
 	var objects []*s3.Object
 	for key, _ := range bucket {
 		objects = append(objects, &s3.Object{Key: aws.String(key)})
