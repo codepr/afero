@@ -37,12 +37,12 @@ func (f *fakeS3Api) GetObject(getObjectInput *s3.GetObjectInput) (*s3.GetObjectO
 }
 
 func (f *fakeS3Api) PutObject(putObjectInput *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
-	if bucket, ok := f.content[*putObjectInput.Bucket]; !ok {
+	bucket, ok := f.content[*putObjectInput.Bucket]
+	if !ok {
 		bucket = make(map[string]io.ReadCloser)
 		f.content[*putObjectInput.Bucket] = bucket
-	} else {
-		bucket[*putObjectInput.Key] = aws.ReadSeekCloser(putObjectInput.Body)
 	}
+	bucket[*putObjectInput.Key] = aws.ReadSeekCloser(putObjectInput.Body)
 	return &s3.PutObjectOutput{}, nil
 }
 
