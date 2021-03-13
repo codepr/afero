@@ -140,3 +140,40 @@ func TestReaddirnames(t *testing.T) {
 		t.Errorf("Readdir failed. Expected %v got %v", want, infos)
 	}
 }
+
+func TestWrite(t *testing.T) {
+	bucket := "test-bucket"
+	key := "/test/path"
+	payload := bytes.NewReader([]byte("Test-bin"))
+	s3api := newFakeS3Api()
+	s3api.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+		Body:   aws.ReadSeekCloser(payload),
+	})
+	s3file := &S3File{
+		s3Api:  s3api,
+		bucket: bucket,
+		key:    key,
+		s3ObjectOutput: &s3.GetObjectOutput{
+			Body:          ioutil.NopCloser(payload),
+			ContentLength: aws.Int64(8),
+		},
+	}
+	changed := []byte("Test-bin-changed")
+	_, err := s3file.Write(changed)
+	if err != nil {
+		t.Errorf("Write failed: %s", err)
+	}
+	getObject, err := s3api.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	body, err := ioutil.ReadAll(getObject.Body)
+	if err != nil {
+		t.Errorf("Write failed: %s", err)
+	}
+	if string(body) != string(changed) {
+		t.Errorf("Write failed. Expected %s got %s", changed, body)
+	}
+}
